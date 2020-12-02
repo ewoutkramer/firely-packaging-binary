@@ -5,6 +5,10 @@
     <LangVersion>9.0</LangVersion>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Hl7.Fhir.R4" Version="2.0.1" />
     <PackageReference Include="MessagePack" Version="2.2.60" />

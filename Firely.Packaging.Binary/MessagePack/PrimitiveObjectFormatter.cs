@@ -143,7 +143,15 @@ namespace Firely.Packaging.Binary.MessagePack
         public const sbyte EXT_TYPE_DATETIME = 3;
         public const sbyte EXT_TYPE_TIME = 4;
 
-        public static object Deserialize(ref MessagePackReader reader)
+        public static object Deserialize(byte[] data) => Deserialize(new ReadOnlyMemory<byte>(data));
+
+        public static object Deserialize(ReadOnlyMemory<byte> data)
+        {
+            var reader = new MessagePackReader(data);
+            return Deserialize(ref reader);
+        }
+
+        internal static object Deserialize(ref MessagePackReader reader)
         {
             if (reader.TryReadNil())
             {
@@ -152,80 +160,52 @@ namespace Firely.Packaging.Binary.MessagePack
 
             MessagePackType type = reader.NextMessagePackType;
 
-            switch (type)
+            return type switch
             {
-                case MessagePackType.Integer:
-                    var code = reader.NextCode;
-                    if (code >= MessagePackCode.MinNegativeFixInt && code <= MessagePackCode.MaxNegativeFixInt)
+                MessagePackType.Integer =>
+                    reader.NextCode switch
                     {
-                        return reader.ReadSByte();
-                    }
-                    else if (code >= MessagePackCode.MinFixInt && code <= MessagePackCode.MaxFixInt)
-                    {
-                        return reader.ReadByte();
-                    }
-                    else if (code == MessagePackCode.Int8)
-                    {
-                        return reader.ReadSByte();
-                    }
-                    else if (code == MessagePackCode.Int16)
-                    {
-                        return reader.ReadInt16();
-                    }
-                    else if (code == MessagePackCode.Int32)
-                    {
-                        return reader.ReadInt32();
-                    }
-                    else if (code == MessagePackCode.Int64)
-                    {
-                        return reader.ReadInt64();
-                    }
-                    else if (code == MessagePackCode.UInt8)
-                    {
-                        return reader.ReadByte();
-                    }
-                    else if (code == MessagePackCode.UInt16)
-                    {
-                        return reader.ReadUInt16();
-                    }
-                    else if (code == MessagePackCode.UInt32)
-                    {
-                        return reader.ReadUInt32();
-                    }
-                    else if (code == MessagePackCode.UInt64)
-                    {
-                        return reader.ReadUInt64();
-                    }
+                        >= MessagePackCode.MinNegativeFixInt and <= MessagePackCode.MaxNegativeFixInt => reader.ReadSByte(),
+                        >= MessagePackCode.MinFixInt and <= MessagePackCode.MaxFixInt => reader.ReadByte(),
+                        MessagePackCode.Int8 => reader.ReadSByte(),
+                        MessagePackCode.Int16 => reader.ReadInt16(),
+                        MessagePackCode.Int32 => reader.ReadInt32(),
+                        MessagePackCode.Int64 => reader.ReadInt64(),
+                        MessagePackCode.UInt8 => reader.ReadByte(),
+                        MessagePackCode.UInt16 => reader.ReadUInt16(),
+                        MessagePackCode.UInt32 => reader.ReadUInt32(),
+                        MessagePackCode.UInt64 => reader.ReadUInt64(),
+                        var unrecognized => throw new FormatException($"Encountered unrecognized integer pack code '{unrecognized}'.")
+                    },
+                MessagePackType.Boolean => reader.ReadBoolean(),
+                MessagePackType.Float => reader.NextCode == MessagePackCode.Float32 ?
+                        reader.ReadSingle() : (object)reader.ReadDouble(),
+                MessagePackType.String => reader.ReadString(),
+                MessagePackType.Binary => reader.ReadBytes()?.ToArray(),
+                MessagePackType.Extension => readExtension(ref reader),
+                MessagePackType.Array => deserializeArray(ref reader),
+                MessagePackType.Map => deserializeMap(ref reader),
+                MessagePackType.Nil => readNill(ref reader),
+                var unrecognized => throw new FormatException($"Encountered unrecognized pack type '{unrecognized}'.")
+            };
 
-                    throw new FormatException($"Encountered unrecognized integer pack code '{code}'.");
-                case MessagePackType.Boolean:
-                    return reader.ReadBoolean();
-                case MessagePackType.Float:
-                    return reader.NextCode == MessagePackCode.Float32 ? reader.ReadSingle() : (object)reader.ReadDouble();
-                case MessagePackType.String:
-                    return reader.ReadString();
-                case MessagePackType.Binary:
-                    // We must copy the sequence returned by ReadBytes since the reader's sequence is only valid during deserialization.
-                    return reader.ReadBytes()?.ToArray();
-                case MessagePackType.Extension:
-                    ExtensionResult ext = reader.ReadExtensionFormat();
-                    return ext.TypeCode switch
-                    {
-                        EXT_TYPE_DATE => parseSystemDateExt(ext),
-                        EXT_TYPE_DATETIME => parseSystemDateTimeExt(ext),
-                        EXT_TYPE_TIME => parseSystemTimeExt(ext),
-                        EXT_TYPE_DECIMAL => parseDecimalExt(ext),
-                        _ => throw new FormatException($"Encountered unrecognized extension pack code '{ext.TypeCode}'.")
-                    };
-                case MessagePackType.Array:
-                    return deserializeArray(ref reader);
-                case MessagePackType.Map:
-                    return deserializeMap(ref reader);
-                case MessagePackType.Nil:
-                    reader.ReadNil();
-                    return null;
-                default:
-                    throw new FormatException($"Encountered unrecognized pack type '{type}'.");
+            static object readExtension(ref MessagePackReader reader)
+            {
+                ExtensionResult ext = reader.ReadExtensionFormat();
+                return ext.TypeCode switch
+                {
+                    EXT_TYPE_DATE => parseSystemDateExt(ext),
+                    EXT_TYPE_DATETIME => parseSystemDateTimeExt(ext),
+                    EXT_TYPE_TIME => parseSystemTimeExt(ext),
+                    EXT_TYPE_DECIMAL => parseDecimalExt(ext),
+                    var unrecognized => throw new FormatException($"Encountered unrecognized extension pack code '{unrecognized}'.")
+                };
+            }
+
+            static object readNill(ref MessagePackReader reader)
+            {
+                reader.ReadNil();
+                return null;
             }
         }
 
@@ -257,6 +237,7 @@ namespace Firely.Packaging.Binary.MessagePack
         {
             int length = reader.ReadMapHeader();
             IDictionary<string, object> dictionary = new ExpandoObject();
+            //IDictionary<string, object> dictionary = new Dictionary<string,object>();
             for (int i = 0; i < length; i++)
             {
                 var key = Deserialize(ref reader);
